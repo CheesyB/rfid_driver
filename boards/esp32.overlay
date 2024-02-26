@@ -1,0 +1,7 @@
+&spi2 {
+	rc522: rc522@0 {
+		compatible = "rc522";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+	};
+};
