@@ -10,6 +10,8 @@
 		0 \
 	)
 
+// MFRC522 registers. Described in chapter 9 of the datasheet.
+// When using SPI all addresses are shifted one bit left in the "SPI address byte" (section 8.1.2.3)
 enum Register {
 	// Page 0: Command and status
 	//						  0x00			// reserved for future use
@@ -98,8 +100,40 @@ enum Command {
 	SoftReset			= 0x0F		// resets the MFRC522
 };
 
+// Return codes from the functions in this class. Remember to update GetStatusCodeName() if you add more.
+// last value set to 0xff, then compiler uses less ram, it seems some optimisations are triggered
+enum StatusCode {
+	STATUS_OK				,	// Success
+	STATUS_ERROR			,	// Error in communication
+	STATUS_COLLISION		,	// Collission detected
+	STATUS_TIMEOUT			,	// Timeout in communication.
+	STATUS_NO_ROOM			,	// A buffer is not big enough.
+	STATUS_INTERNAL_ERROR	,	// Internal error in the code. Should not happen ;-)
+	STATUS_INVALID			,	// Invalid argument.
+	STATUS_CRC_WRONG		,	// The CRC_A does not match
+	STATUS_MIFARE_NACK		= 0xff	// A MIFARE PICC responded with NAK.
+};
+
 int rc522_write_register(const struct spi_dt_spec *rc522, uint8_t reg, uint8_t write_value);
 int rc522_write_register_many(const struct spi_dt_spec *rc522, uint8_t reg, int length, uint8_t *write_values);
 int rc522_read_register(const struct spi_dt_spec *rc522, uint8_t reg, uint8_t *read_value);
-int rc522_read_register_many(const struct spi_dt_spec *rc522, uint8_t reg, int length, uint8_t *read_values);
+int rc522_read_register_many(const struct spi_dt_spec *rc522, uint8_t reg, int length, uint8_t *read_values, uint8_t rx_align);
 int rc522_test(const struct spi_dt_spec *rc522);
+
+int rc522_init(const struct spi_dt_spec *rc522);
+
+struct communicate_argument {
+	uint8_t command; // Required.
+	uint8_t wait_irq; // Required.
+	uint8_t *transmit_data; // Required.
+	uint8_t transmit_len; // Required.
+	uint8_t *receive_data; // Default NULL.
+	uint8_t receive_len; // Default 0.
+	uint8_t valid_bits; // Default 0.
+	uint8_t rx_align; // Default 0.
+	int check_CRC; // Default false (0).
+};
+
+int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argument *arg);
+
+int rc522_reqa(const struct spi_dt_spec *rc522, uint8_t *atqa);
