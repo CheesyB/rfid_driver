@@ -165,6 +165,9 @@ int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argume
 		if (irq & 0x01) { // 25 ms timer interrupt.
 			return STATUS_TIMEOUT;
 		}
+		/*uint8_t reg;
+		rc522_read_register(rc522, BitFramingReg, &reg);
+		printk("Reg: %d\n", reg);*/
 		k_yield();
 	} while (k_uptime_get_32() - start < 36);
 	
@@ -181,11 +184,11 @@ int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argume
 	if (arg->receive_data && arg->receive_len) {
 		uint8_t len;
 		rc522_read_register(rc522, FIFOLevelReg, &len);
-		if (len > arg->receive_len) {
+		/*if (len > arg->receive_len) {
 			return STATUS_NO_ROOM;
-		}
+		}*/
+		rc522_read_register_many(rc522, FIFODataReg, arg->receive_len, arg->receive_data, arg->rx_align);
 		arg->receive_len = len;
-		rc522_read_register_many(rc522, FIFODataReg, len, arg->receive_data, arg->rx_align);
 
 		rc522_read_register(rc522, ControlReg, &arg->valid_bits);
 		arg->valid_bits &= 0x07;
@@ -211,5 +214,60 @@ int rc522_reqa(const struct spi_dt_spec *rc522, uint8_t *atqa) {
 		.receive_len = 2,
 		.valid_bits = 7
 	};
+	printk("Sending REQA: 0x%02X\n", reqa[0]);
+	return rc522_communicate(rc522, &arg);
+}
+
+int rc522_crc(const struct spi_dt_spec *rc522, uint8_t *data, uint8_t length, uint8_t *result) {
+	rc522_write_register(rc522, CommandReg, Idle);
+	rc522_write_register(rc522, DivIrqReg, 0x04); // Clear CRCIRq bit.
+	rc522_write_register(rc522, FIFOLevelReg, 0x80); // Flush FIFO buffer.
+	rc522_write_register_many(rc522, FIFODataReg, length, data);
+	rc522_write_register(rc522, CommandReg, CalcCRC);
+
+	uint32_t start = k_uptime_get_32();
+	do {
+		uint8_t irq;
+		rc522_read_register(rc522, DivIrqReg, &irq);
+		if (irq & 0x04) {
+			rc522_write_register(rc522, CommandReg, Idle);
+			rc522_read_register(rc522, CRCResultRegL, result);
+			rc522_read_register(rc522, CRCResultRegH, result+1);
+			return STATUS_OK;
+		}
+		k_yield();
+	} while (k_uptime_get_32() - start < 89);
+
+	return STATUS_TIMEOUT;
+}
+
+int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, uint8_t UID_valid, uint8_t *sak) {
+	uint8_t select[9];
+	select[0] = 0x93;
+	if (UID_valid) {
+		select[1] = 0x70;
+		select[2] = UID[0];
+		select[3] = UID[1];
+		select[4] = UID[2];
+		select[5] = UID[3];
+		select[6] = select[2] ^ select[3] ^ select[4] ^ select[5];
+		rc522_crc(rc522, select, 7, select+7);
+	} else {
+		select[1] = 0x20;
+	}
+
+	struct communicate_argument arg = {
+		.command = Transceive,
+		.wait_irq = 0x30, // RxIrq IdleIrq
+		.transmit_data = select,
+		.transmit_len = UID_valid ? 9 : 2,
+		.receive_data = UID_valid ? sak : UID,
+		.receive_len = UID_valid ? 1 : 4,
+	};
+	printk("Sending Select:");
+	for (int i = 0; i < (UID_valid ? 9 : 2); i++) {
+		printk(" 0x%02X", select[i]);
+	}
+	printk("\n");
 	return rc522_communicate(rc522, &arg);
 }

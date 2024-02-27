@@ -135,5 +135,6 @@ struct communicate_argument {
 };
 
 int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argument *arg);
-
 int rc522_reqa(const struct spi_dt_spec *rc522, uint8_t *atqa);
+int rc522_crc(const struct spi_dt_spec *rc522, uint8_t *data, uint8_t length, uint8_t *result);
+int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, uint8_t UID_valid, uint8_t *sak);
