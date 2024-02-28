@@ -166,8 +166,8 @@ int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argume
 			return STATUS_TIMEOUT;
 		}
 		/*uint8_t reg;
-		rc522_read_register(rc522, BitFramingReg, &reg);
-		printk("Reg: %d\n", reg);*/
+		rc522_read_register(rc522, CommandReg, &reg);
+		printk("Reg: %02X\n", reg);*/
 		k_yield();
 	} while (k_uptime_get_32() - start < 36);
 	
@@ -203,19 +203,33 @@ int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argume
 	return STATUS_OK;
 }
 
+void print_bytes(uint8_t length, uint8_t *bytes) {
+	for (int i = 0; i < length; i++) {
+		printk("%02X ", bytes[i]);
+	}
+	printk("\n");
+}
+
 int rc522_reqa(const struct spi_dt_spec *rc522, uint8_t *atqa) {
-	uint8_t reqa[1] = {0x26};
+	uint8_t reqa[1] = {PICC_CMD_REQA};
 	struct communicate_argument arg = {
 		.command = Transceive,
-		.wait_irq = 0x30, // RxIrq IdleIrq
+		.wait_irq = 0x20, // RxIrq
 		.transmit_data = reqa,
 		.transmit_len = 1,
 		.receive_data = atqa,
 		.receive_len = 2,
 		.valid_bits = 7
 	};
-	printk("Sending REQA: 0x%02X\n", reqa[0]);
-	return rc522_communicate(rc522, &arg);
+	printk("-> REQA:\t");
+	print_bytes(1, reqa);
+	int ret;
+	ret = rc522_communicate(rc522, &arg);
+	if (ret == STATUS_OK) {
+		printk("<- ATQA:\t");
+		print_bytes(2, atqa);
+	}
+	return ret;
 }
 
 int rc522_crc(const struct spi_dt_spec *rc522, uint8_t *data, uint8_t length, uint8_t *result) {
@@ -243,7 +257,7 @@ int rc522_crc(const struct spi_dt_spec *rc522, uint8_t *data, uint8_t length, ui
 
 int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, uint8_t UID_valid, uint8_t *sak) {
 	uint8_t select[9];
-	select[0] = 0x93;
+	select[0] = PICC_CMD_SEL_CL1;
 	if (UID_valid) {
 		select[1] = 0x70;
 		select[2] = UID[0];
@@ -258,16 +272,109 @@ int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, uint8_t UID_vali
 
 	struct communicate_argument arg = {
 		.command = Transceive,
-		.wait_irq = 0x30, // RxIrq IdleIrq
+		.wait_irq = 0x20, // RxIrq
 		.transmit_data = select,
 		.transmit_len = UID_valid ? 9 : 2,
 		.receive_data = UID_valid ? sak : UID,
-		.receive_len = UID_valid ? 1 : 4,
+		.receive_len = UID_valid ? 1 : 5,
 	};
-	printk("Sending Select:");
-	for (int i = 0; i < (UID_valid ? 9 : 2); i++) {
-		printk(" 0x%02X", select[i]);
+	printk("-> Select:\t");
+	print_bytes(UID_valid ? 9 : 2, select);
+	int ret;
+	ret = rc522_communicate(rc522, &arg);
+	printk("<- %s:\t\t", UID_valid ? "SAK" : "UID");
+	print_bytes(UID_valid ? 1 : 5, UID_valid ? sak : UID);
+	return ret;
+}
+
+int rc522_authenticate(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *key, uint8_t *UID) {
+	uint8_t auth[12];
+	auth[0] = PICC_CMD_MF_AUTH_KEY_A;
+	auth[1] = block_addr;
+	memcpy(auth+2, key, 6);
+	memcpy(auth+8, UID, 4);
+
+	struct communicate_argument arg = {
+		.command = MFAuthent,
+		.wait_irq = 0x10, // IdleIrq
+		.transmit_data = auth,
+		.transmit_len = 12,
+	};
+
+	printk("-> Auth:\t");
+	print_bytes(12, auth);
+	int ret;
+	ret = rc522_communicate(rc522, &arg);
+	if (ret == STATUS_OK) {
+		printk("<- OK!\n");
 	}
-	printk("\n");
-	return rc522_communicate(rc522, &arg);
+	return ret;
+}
+
+void rc522_print_status(uint8_t status_code) {
+	switch(status_code) {
+		case STATUS_OK:
+			printk("STATUS_OK\n");
+			break;
+		case STATUS_ERROR:
+			printk("STATUS_ERROR\n");
+			break;
+		case STATUS_COLLISION:
+			printk("STATUS_COLLISION\n");
+			break;
+		case STATUS_TIMEOUT:
+			printk("STATUS_TIMEOUT\n");
+			break;
+		case STATUS_NO_ROOM:
+			printk("STATUS_NO_ROOM\n");
+			break;
+		case STATUS_INTERNAL_ERROR:
+			printk("STATUS_INTERNAL_ERROR\n");
+			break;
+		case STATUS_INVALID:
+			printk("STATUS_INVALID\n");
+			break;
+		case STATUS_CRC_WRONG:
+			printk("STATUS_CRC_WRONG\n");
+			break;
+		case STATUS_MIFARE_NACK:
+			printk("STATUS_MIFARE_NACK\n");
+			break;
+	}
+}
+
+int rc522_read(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *length, uint8_t *read_values) {
+	if (read_values == NULL || *length < 18) {
+		return STATUS_NO_ROOM;
+	}
+
+	read_values[0] = PICC_CMD_MF_READ;
+	read_values[1] = block_addr;
+	rc522_crc(rc522, read_values, 2, read_values+2);
+
+	struct communicate_argument arg = {
+		.command = Transceive,
+		.wait_irq = 0x20, // RxIrq
+		.transmit_data = read_values,
+		.transmit_len = 4,
+		.receive_data = read_values,
+		.receive_len = *length
+	};
+	printk("-> Read:\t");
+	print_bytes(4, read_values);
+	int ret;
+	ret = rc522_communicate(rc522, &arg);
+	*length = arg.receive_len;
+	if (ret == STATUS_OK) {
+		printk("<- Data:\t");
+		print_bytes(*length, read_values);
+	}
+	return ret;
+}
+
+int rc522_deauthenticate(const struct spi_dt_spec *rc522) {
+	uint8_t reg;
+	rc522_read_register(rc522, Status2Reg, &reg);
+	rc522_write_register(rc522, Status2Reg, reg & 0xF7);
+	return STATUS_OK;
 }

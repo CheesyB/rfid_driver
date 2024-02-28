@@ -9,34 +9,35 @@ int main() {
 	rc522_init(&rc522);
 
 	uint8_t atqa[2] = {0};
-	uint8_t UID[4] = {0};
+	uint8_t UID[5] = {0};
 	uint8_t sak[1] = {0};
+	uint8_t key[6];
+	memset(key, 0xFF, 6);
+	uint8_t read_values[18] = {0};
 	while (1) {
-		k_msleep(5000);
+		k_msleep(3000);
 
 		ret = rc522_reqa(&rc522, atqa);
+		rc522_print_status(ret);
 		if (ret != STATUS_OK) {
-			printk("Error: %d\n", ret);
 			continue;
-		} else {
-			printk("Received ATQA: 0x%02X 0x%02X\n", atqa[1], atqa[0]);
 		}
 
 		ret = rc522_select(&rc522, UID, 0, NULL);
-		if (ret != STATUS_OK) {
-			printk("Error: %d\n", ret);
-			continue;
-		} else {
-			printk("Received UID: 0x%02X 0x%02X 0x%02X 0x%02X\n", UID[0], UID[1], UID[2], UID[3]);
+		rc522_print_status(ret);
+		ret = rc522_select(&rc522, UID, 1, sak);
+		rc522_print_status(ret);
+		ret = rc522_authenticate(&rc522, 0, key, UID);
+		rc522_print_status(ret);
+
+		uint8_t length;
+		for (int i = 0; i < 4; i++) {
+			length = 18;
+			ret = rc522_read(&rc522, i, &length, read_values);
+			rc522_print_status(ret);
 		}
 
-		ret = rc522_select(&rc522, UID, 1, sak);
-		if (ret != STATUS_OK) {
-			printk("Error: %d\n", ret);
-			continue;
-		} else {
-			printk("Received SAK: 0x%02X\n", sak[0]);
-		}
+		rc522_deauthenticate(&rc522);
 	}
 
 	return 0;
