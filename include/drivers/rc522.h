@@ -170,3 +170,13 @@ int rc522_authenticate(const struct spi_dt_spec *rc522, uint8_t block_addr, uint
 void rc522_print_status(uint8_t status_code);
 int rc522_read(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *length, uint8_t *read_values);
 int rc522_deauthenticate(const struct spi_dt_spec *rc522);
+
+// MIFARE constants that does not fit anywhere else
+enum MIFARE_Misc {
+	MF_ACK					= 0xA,		// The MIFARE Classic uses a 4 bit ACK/NAK. Any other value than 0xA is NAK.
+	MF_KEY_SIZE				= 6			// A Mifare Crypto1 key is 6 bytes.
+};
+
+int rc522_mifare_transceive(const struct spi_dt_spec *rc522, uint8_t length, uint8_t *data, int accept_timeout);
+
+int rc522_mifare_write(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t length, uint8_t *data);

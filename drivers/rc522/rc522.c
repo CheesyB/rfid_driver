@@ -198,7 +198,23 @@ int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argume
 		return STATUS_COLLISION;
 	}
 
-	// TODO: CRC validation.
+	if (arg->receive_data && arg->receive_len && arg->check_CRC) {
+		if (arg->receive_len == 1 && arg->valid_bits == 4) {
+			return STATUS_MIFARE_NACK;
+		}
+
+		if (arg->receive_len < 2 || arg->valid_bits != 0) {
+			return STATUS_CRC_WRONG;
+		}
+
+		uint8_t CRC[2];
+		rc522_crc(rc522, arg->receive_data, arg->receive_len-2, CRC);
+
+		if ((CRC[0] != arg->receive_data[arg->receive_len-2])
+		 	|| (CRC[1] != arg->receive_data[arg->receive_len-1])) {
+			return STATUS_CRC_WRONG;
+		}
+	}
 	
 	return STATUS_OK;
 }
@@ -214,18 +230,18 @@ int rc522_reqa(const struct spi_dt_spec *rc522, uint8_t *atqa) {
 	uint8_t reqa[1] = {PICC_CMD_REQA};
 	struct communicate_argument arg = {
 		.command = Transceive,
-		.wait_irq = 0x20, // RxIrq
+		.wait_irq = 0x20, // RxIRq
 		.transmit_data = reqa,
 		.transmit_len = 1,
 		.receive_data = atqa,
 		.receive_len = 2,
 		.valid_bits = 7
 	};
-	printk("-> REQA:\t");
-	print_bytes(1, reqa);
 	int ret;
 	ret = rc522_communicate(rc522, &arg);
 	if (ret == STATUS_OK) {
+		printk("-> REQA:\t");
+		print_bytes(1, reqa);
 		printk("<- ATQA:\t");
 		print_bytes(2, atqa);
 	}
@@ -272,7 +288,7 @@ int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, uint8_t UID_vali
 
 	struct communicate_argument arg = {
 		.command = Transceive,
-		.wait_irq = 0x20, // RxIrq
+		.wait_irq = 0x20, // RxIRq
 		.transmit_data = select,
 		.transmit_len = UID_valid ? 9 : 2,
 		.receive_data = UID_valid ? sak : UID,
@@ -296,7 +312,7 @@ int rc522_authenticate(const struct spi_dt_spec *rc522, uint8_t block_addr, uint
 
 	struct communicate_argument arg = {
 		.command = MFAuthent,
-		.wait_irq = 0x10, // IdleIrq
+		.wait_irq = 0x10, // IdleIRq
 		.transmit_data = auth,
 		.transmit_len = 12,
 	};
@@ -354,21 +370,20 @@ int rc522_read(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *len
 
 	struct communicate_argument arg = {
 		.command = Transceive,
-		.wait_irq = 0x20, // RxIrq
+		.wait_irq = 0x20, // RxIRq
 		.transmit_data = read_values,
 		.transmit_len = 4,
 		.receive_data = read_values,
-		.receive_len = *length
+		.receive_len = *length,
+		.check_CRC = 1
 	};
 	printk("-> Read:\t");
 	print_bytes(4, read_values);
 	int ret;
 	ret = rc522_communicate(rc522, &arg);
 	*length = arg.receive_len;
-	if (ret == STATUS_OK) {
-		printk("<- Data:\t");
-		print_bytes(*length, read_values);
-	}
+	printk("<- Data:\t");
+	print_bytes(*length, read_values);
 	return ret;
 }
 
@@ -376,5 +391,64 @@ int rc522_deauthenticate(const struct spi_dt_spec *rc522) {
 	uint8_t reg;
 	rc522_read_register(rc522, Status2Reg, &reg);
 	rc522_write_register(rc522, Status2Reg, reg & 0xF7);
+	return STATUS_OK;
+}
+
+int rc522_mifare_transceive(const struct spi_dt_spec *rc522, uint8_t length, uint8_t *data, int accept_timeout) {
+	if (data == NULL || length > 16) {
+		return STATUS_INVALID;
+	}
+
+	uint8_t buffer[18];
+	memcpy(buffer, data, length);
+	rc522_crc(rc522, buffer, length, buffer+length);
+
+	struct communicate_argument arg = {
+		.command = Transceive,
+		.wait_irq = 0x20, // RxIRq
+		.transmit_data = buffer,
+		.transmit_len = length+2,
+		.receive_data = buffer,
+		.receive_len = 18
+	};
+	printk("-> Cmd:\t\t");
+	print_bytes(length+2, buffer);
+	int ret;
+	ret = rc522_communicate(rc522, &arg);
+	printk("<- ACK:\t\t");
+	print_bytes(arg.receive_len, buffer);
+	if (accept_timeout && ret == STATUS_TIMEOUT) {
+		return STATUS_OK;
+	}
+	if (ret != STATUS_OK) {
+		return ret;
+	}
+	if (arg.receive_len != 1 || arg.valid_bits != 4) {
+		return STATUS_ERROR;
+	}
+	if (buffer[0] != MF_ACK) {
+		return STATUS_MIFARE_NACK;
+	}
+	return STATUS_OK;
+}
+
+int rc522_mifare_write(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t length, uint8_t *data) {
+	if (data == NULL || length < 16) {
+		return STATUS_INVALID;
+	}
+	uint8_t write[2];
+	write[0] = PICC_CMD_MF_WRITE;
+	write[1] = block_addr;
+
+	int ret;
+	ret = rc522_mifare_transceive(rc522, 2, write, 0);
+	if (ret != STATUS_OK) {
+		return ret;
+	}
+
+	ret = rc522_mifare_transceive(rc522, length, data, 0);
+	if (ret != STATUS_OK) {
+		return ret;
+	}
 	return STATUS_OK;
 }
