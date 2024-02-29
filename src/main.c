@@ -1,5 +1,5 @@
 #include <zephyr/kernel.h>
-#include "drivers/rc522.h"
+#include "fob.h"
 
 static const struct spi_dt_spec rc522 = RC522_SPI_DT_SPEC_GET(DT_NODELABEL(rc522));
 
@@ -9,32 +9,28 @@ int main() {
 	rc522_init(&rc522);
 
 	while (1) {
-		ret = rc522_reqa(&rc522);
-		if (ret != STATUS_OK) {
-			k_msleep(250);
-			continue;
-		}
-
-		uint8_t UID[5] = {0};
-		rc522_select(&rc522, UID, 0, NULL);
-
-		ret = rc522_select(&rc522, UID, 1, NULL);
-		if (ret != STATUS_OK) {
-			continue;
-		}
-
-		const uint8_t block = 1;
+		const uint8_t sector = 1;
 		const uint8_t key[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-		rc522_mifare_auth(&rc522, block, key, UID);
+		const uint8_t new_key[6] = {0x00};
 
-		uint8_t length = 18;
-		uint8_t read_values[18] = {0};
-		rc522_mifare_read(&rc522, block, &length, read_values);
+		fob_write_key(&rc522, sector, new_key, new_key);
+		fob_write_key(&rc522, sector, key, new_key);
+		fob_write_key(&rc522, sector, key, key);
+		fob_write_key(&rc522, sector, new_key, key);
 
-		read_values[0]++;
-		rc522_mifare_write(&rc522, block, 16, read_values);
+		const uint8_t passcode[6] = {0xAB};
+		uint8_t passcode_read[6] = {0};
 
-		rc522_mifare_deauth(&rc522);
+		fob_read_passcode(&rc522, sector, key, passcode_read);
+		printf("0x%02X\n", passcode_read[0]);
+
+		fob_write_passcode(&rc522, sector, key, passcode);
+
+		fob_read_passcode(&rc522, sector, key, passcode_read);
+		printf("0x%02X\n", passcode_read[0]);
+
+		passcode_read[0] = 0x00;
+		fob_write_passcode(&rc522, sector, key, passcode_read);
 
 		k_msleep(1500);
 	}
