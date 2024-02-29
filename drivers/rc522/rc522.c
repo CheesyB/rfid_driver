@@ -1,13 +1,13 @@
 #include "drivers/rc522.h"
 
-int rc522_write_register(const struct spi_dt_spec *rc522, uint8_t reg, uint8_t write_value) {
+static int rc522_write_register(const struct spi_dt_spec *rc522, const uint8_t reg, const uint8_t write_value) {
 	uint8_t tx_buf[2] = {reg, write_value};
 	struct spi_buf send_buf = {tx_buf, 2};
 	struct spi_buf_set send_buf_set = {&send_buf, 1};
 	return spi_write_dt(rc522, &send_buf_set);
 }
 
-int rc522_write_register_many(const struct spi_dt_spec *rc522, uint8_t reg, int length, uint8_t *write_values) {
+static int rc522_write_register_many(const struct spi_dt_spec *rc522, const uint8_t reg, const int length, const uint8_t *write_values) {
 	uint8_t tx_buf[length+1];
 	tx_buf[0] = reg;
 	memset(tx_buf+1, 0, length);
@@ -17,7 +17,7 @@ int rc522_write_register_many(const struct spi_dt_spec *rc522, uint8_t reg, int 
 	return spi_write_dt(rc522, &send_buf_set);
 }
 
-int rc522_read_register(const struct spi_dt_spec *rc522, uint8_t reg, uint8_t *read_value) {
+static int rc522_read_register(const struct spi_dt_spec *rc522, const uint8_t reg, uint8_t *read_value) {
 	uint8_t tx_buf[2] = {0x80 | reg};
 	struct spi_buf send_buf = {tx_buf, 2};
 	struct spi_buf_set send_buf_set = {&send_buf, 1};
@@ -32,7 +32,7 @@ int rc522_read_register(const struct spi_dt_spec *rc522, uint8_t reg, uint8_t *r
 	return ret;
 }
 
-int rc522_read_register_many(const struct spi_dt_spec *rc522, uint8_t reg, int length, uint8_t *read_values, uint8_t rx_align) {
+static int rc522_read_register_many(const struct spi_dt_spec *rc522, const uint8_t reg, const int length, uint8_t *read_values, const uint8_t rx_align) {
 	if (length == 0) return 0;
 
 	uint8_t tx_buf[length+1];
@@ -59,13 +59,13 @@ int rc522_read_register_many(const struct spi_dt_spec *rc522, uint8_t reg, int l
 
 int rc522_test(const struct spi_dt_spec *rc522) {
 	/* 1. Perform a soft reset. */
-	rc522_write_register(rc522, CommandReg, SoftReset);
+	rc522_write_register(rc522, CommandReg, PCD_SoftReset);
 
 	/* 2. Clear the internal buffer by writing 25 bytes of 00h and implement the config command. */
 	uint8_t ZEROS[25] = {0};
 	rc522_write_register(rc522, FIFOLevelReg, 0x80); // Flush FIFO buffer
 	rc522_write_register_many(rc522, FIFODataReg, 25, ZEROS); // Write 25 zeros to FIFO buffer
-	rc522_write_register(rc522, CommandReg, Mem); // Transfer zeros to internal buffer
+	rc522_write_register(rc522, CommandReg, PCD_Mem); // Transfer zeros to internal buffer
 	
 	/* 3. Enable the self test by writing 09h to the AutoTestReg register. */
 	rc522_write_register(rc522, AutoTestReg, 0x09);
@@ -74,7 +74,7 @@ int rc522_test(const struct spi_dt_spec *rc522) {
 	rc522_write_register(rc522, FIFODataReg, 0x00);
 
 	/* 5. Start the self test with the CalcCRC command. */
-	rc522_write_register(rc522, CommandReg, CalcCRC);
+	rc522_write_register(rc522, CommandReg, PCD_CalcCRC);
 
 	/* 6. The self test is initiated. */
 
@@ -87,7 +87,7 @@ int rc522_test(const struct spi_dt_spec *rc522) {
 			break;
 		}
 	}
-	rc522_write_register(rc522, CommandReg, Idle);
+	rc522_write_register(rc522, CommandReg, PCD_Idle);
 
 	// Read data in FIFO buffer.
 	uint8_t buffer[64];
@@ -108,7 +108,7 @@ int rc522_test(const struct spi_dt_spec *rc522) {
 }
 
 int rc522_init(const struct spi_dt_spec *rc522) {
-	rc522_write_register(rc522, CommandReg, SoftReset);
+	rc522_write_register(rc522, CommandReg, PCD_SoftReset);
 	/*uint8_t count = 0;
 	do {
 		k_msleep(50);
@@ -139,17 +139,40 @@ int rc522_init(const struct spi_dt_spec *rc522) {
 	return STATUS_OK;
 }
 
-int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argument *arg) {
+static int rc522_crc(const struct spi_dt_spec *rc522, const uint8_t *data, const uint8_t length, uint8_t *result) {
+	rc522_write_register(rc522, CommandReg, PCD_Idle);
+	rc522_write_register(rc522, DivIrqReg, 0x04); // Clear CRCIRq bit.
+	rc522_write_register(rc522, FIFOLevelReg, 0x80); // Flush FIFO buffer.
+	rc522_write_register_many(rc522, FIFODataReg, length, data);
+	rc522_write_register(rc522, CommandReg, PCD_CalcCRC);
+
+	uint32_t start = k_uptime_get_32();
+	do {
+		uint8_t irq;
+		rc522_read_register(rc522, DivIrqReg, &irq);
+		if (irq & 0x04) {
+			rc522_write_register(rc522, CommandReg, PCD_Idle);
+			rc522_read_register(rc522, CRCResultRegL, result);
+			rc522_read_register(rc522, CRCResultRegH, result+1);
+			return STATUS_OK;
+		}
+		k_yield();
+	} while (k_uptime_get_32() - start < 89);
+
+	return STATUS_TIMEOUT;
+}
+
+static int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argument *arg) {
 	uint8_t tx_last_bits = arg->valid_bits;
 	uint8_t bit_framing = (arg->rx_align << 4) + tx_last_bits;
 
-	rc522_write_register(rc522, CommandReg, Idle);
+	rc522_write_register(rc522, CommandReg, PCD_Idle);
 	rc522_write_register(rc522, ComIrqReg, 0x7f); // Clear interrupt bits.
 	rc522_write_register(rc522, FIFOLevelReg, 0x80); // Flush FIFO buffer.
 	rc522_write_register_many(rc522, FIFODataReg, arg->transmit_len, arg->transmit_data);
 	rc522_write_register(rc522, BitFramingReg, bit_framing);
 	rc522_write_register(rc522, CommandReg, arg->command);
-	if (arg->command == Transceive) {
+	if (arg->command == PCD_Transceive) {
 		rc522_write_register(rc522, BitFramingReg, bit_framing | 0x80);
 	}
 
@@ -219,115 +242,14 @@ int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argume
 	return STATUS_OK;
 }
 
-void print_bytes(uint8_t length, uint8_t *bytes) {
+static void print_bytes(const uint8_t length, const uint8_t *bytes) {
 	for (int i = 0; i < length; i++) {
 		printk("%02X ", bytes[i]);
 	}
 	printk("\n");
 }
 
-int rc522_reqa(const struct spi_dt_spec *rc522, uint8_t *atqa) {
-	uint8_t reqa[1] = {PICC_CMD_REQA};
-	struct communicate_argument arg = {
-		.command = Transceive,
-		.wait_irq = 0x20, // RxIRq
-		.transmit_data = reqa,
-		.transmit_len = 1,
-		.receive_data = atqa,
-		.receive_len = 2,
-		.valid_bits = 7
-	};
-	int ret;
-	ret = rc522_communicate(rc522, &arg);
-	if (ret == STATUS_OK) {
-		printk("-> REQA:\t");
-		print_bytes(1, reqa);
-		printk("<- ATQA:\t");
-		print_bytes(2, atqa);
-	}
-	return ret;
-}
-
-int rc522_crc(const struct spi_dt_spec *rc522, uint8_t *data, uint8_t length, uint8_t *result) {
-	rc522_write_register(rc522, CommandReg, Idle);
-	rc522_write_register(rc522, DivIrqReg, 0x04); // Clear CRCIRq bit.
-	rc522_write_register(rc522, FIFOLevelReg, 0x80); // Flush FIFO buffer.
-	rc522_write_register_many(rc522, FIFODataReg, length, data);
-	rc522_write_register(rc522, CommandReg, CalcCRC);
-
-	uint32_t start = k_uptime_get_32();
-	do {
-		uint8_t irq;
-		rc522_read_register(rc522, DivIrqReg, &irq);
-		if (irq & 0x04) {
-			rc522_write_register(rc522, CommandReg, Idle);
-			rc522_read_register(rc522, CRCResultRegL, result);
-			rc522_read_register(rc522, CRCResultRegH, result+1);
-			return STATUS_OK;
-		}
-		k_yield();
-	} while (k_uptime_get_32() - start < 89);
-
-	return STATUS_TIMEOUT;
-}
-
-int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, uint8_t UID_valid, uint8_t *sak) {
-	uint8_t select[9];
-	select[0] = PICC_CMD_SEL_CL1;
-	if (UID_valid) {
-		select[1] = 0x70;
-		select[2] = UID[0];
-		select[3] = UID[1];
-		select[4] = UID[2];
-		select[5] = UID[3];
-		select[6] = select[2] ^ select[3] ^ select[4] ^ select[5];
-		rc522_crc(rc522, select, 7, select+7);
-	} else {
-		select[1] = 0x20;
-	}
-
-	struct communicate_argument arg = {
-		.command = Transceive,
-		.wait_irq = 0x20, // RxIRq
-		.transmit_data = select,
-		.transmit_len = UID_valid ? 9 : 2,
-		.receive_data = UID_valid ? sak : UID,
-		.receive_len = UID_valid ? 1 : 5,
-	};
-	printk("-> Select:\t");
-	print_bytes(UID_valid ? 9 : 2, select);
-	int ret;
-	ret = rc522_communicate(rc522, &arg);
-	printk("<- %s:\t\t", UID_valid ? "SAK" : "UID");
-	print_bytes(UID_valid ? 1 : 5, UID_valid ? sak : UID);
-	return ret;
-}
-
-int rc522_authenticate(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *key, uint8_t *UID) {
-	uint8_t auth[12];
-	auth[0] = PICC_CMD_MF_AUTH_KEY_A;
-	auth[1] = block_addr;
-	memcpy(auth+2, key, 6);
-	memcpy(auth+8, UID, 4);
-
-	struct communicate_argument arg = {
-		.command = MFAuthent,
-		.wait_irq = 0x10, // IdleIRq
-		.transmit_data = auth,
-		.transmit_len = 12,
-	};
-
-	printk("-> Auth:\t");
-	print_bytes(12, auth);
-	int ret;
-	ret = rc522_communicate(rc522, &arg);
-	if (ret == STATUS_OK) {
-		printk("<- OK!\n");
-	}
-	return ret;
-}
-
-void rc522_print_status(uint8_t status_code) {
+void rc522_print_status(const uint8_t status_code) {
 	switch(status_code) {
 		case STATUS_OK:
 			printk("STATUS_OK\n");
@@ -359,7 +281,99 @@ void rc522_print_status(uint8_t status_code) {
 	}
 }
 
-int rc522_read(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *length, uint8_t *read_values) {
+int rc522_reqa(const struct spi_dt_spec *rc522) {
+	uint8_t reqa[1] = {PICC_CMD_REQA};
+	uint8_t atqa[2] = {0};
+	struct communicate_argument arg = {
+		.command = PCD_Transceive,
+		.wait_irq = 0x20, // RxIRq
+		.transmit_data = reqa,
+		.transmit_len = 1,
+		.receive_data = atqa,
+		.receive_len = 2,
+		.valid_bits = 7
+	};
+	printk("-> REQA:\t");
+	print_bytes(1, reqa);
+	int ret;
+	ret = rc522_communicate(rc522, &arg);
+	printk("<- ATQA:\t");
+	print_bytes(2, atqa);
+	rc522_print_status(ret);
+	return ret;
+}
+
+int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, const uint8_t UID_valid, uint8_t *sak) {
+	uint8_t select[9];
+	select[0] = PICC_CMD_SEL_CL1;
+	if (UID_valid) {
+		select[1] = 0x70;
+		select[2] = UID[0];
+		select[3] = UID[1];
+		select[4] = UID[2];
+		select[5] = UID[3];
+		select[6] = select[2] ^ select[3] ^ select[4] ^ select[5];
+		rc522_crc(rc522, select, 7, select+7);
+	} else {
+		select[1] = 0x20;
+	}
+	
+	uint8_t local_sak[1] = {0};
+	if (UID_valid && sak == NULL) {
+		sak = local_sak;
+	}
+
+	struct communicate_argument arg = {
+		.command = PCD_Transceive,
+		.wait_irq = 0x20, // RxIRq
+		.transmit_data = select,
+		.transmit_len = UID_valid ? 9 : 2,
+		.receive_data = UID_valid ? sak : UID,
+		.receive_len = UID_valid ? 1 : 5,
+	};
+	printk("-> Select:\t");
+	print_bytes(UID_valid ? 9 : 2, select);
+	int ret;
+	ret = rc522_communicate(rc522, &arg);
+	printk("<- %s:\t\t", UID_valid ? "SAK" : "UID");
+	print_bytes(UID_valid ? 1 : 5, UID_valid ? sak : UID);
+	rc522_print_status(ret);
+	return ret;
+}
+
+int rc522_mifare_auth(const struct spi_dt_spec *rc522, const uint8_t block_addr, const uint8_t *key, const uint8_t *UID) {
+	uint8_t auth[12];
+	auth[0] = PICC_CMD_MF_AUTH_KEY_A;
+	auth[1] = block_addr;
+	memcpy(auth+2, key, 6);
+	memcpy(auth+8, UID, 4);
+
+	struct communicate_argument arg = {
+		.command = PCD_MFAuthent,
+		.wait_irq = 0x10, // IdleIRq
+		.transmit_data = auth,
+		.transmit_len = 12,
+	};
+
+	printk("-> Auth:\t");
+	print_bytes(12, auth);
+	int ret;
+	ret = rc522_communicate(rc522, &arg);
+	if (ret == STATUS_OK) {
+		printk("<- OK!\n");
+	}
+	rc522_print_status(ret);
+	return ret;
+}
+
+int rc522_mifare_deauth(const struct spi_dt_spec *rc522) {
+	uint8_t reg;
+	rc522_read_register(rc522, Status2Reg, &reg);
+	rc522_write_register(rc522, Status2Reg, reg & 0xF7);
+	return STATUS_OK;
+}
+
+int rc522_mifare_read(const struct spi_dt_spec *rc522, const uint8_t block_addr, uint8_t *length, uint8_t *read_values) {
 	if (read_values == NULL || *length < 18) {
 		return STATUS_NO_ROOM;
 	}
@@ -369,7 +383,7 @@ int rc522_read(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *len
 	rc522_crc(rc522, read_values, 2, read_values+2);
 
 	struct communicate_argument arg = {
-		.command = Transceive,
+		.command = PCD_Transceive,
 		.wait_irq = 0x20, // RxIRq
 		.transmit_data = read_values,
 		.transmit_len = 4,
@@ -384,27 +398,17 @@ int rc522_read(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *len
 	*length = arg.receive_len;
 	printk("<- Data:\t");
 	print_bytes(*length, read_values);
+	rc522_print_status(ret);
 	return ret;
 }
 
-int rc522_deauthenticate(const struct spi_dt_spec *rc522) {
-	uint8_t reg;
-	rc522_read_register(rc522, Status2Reg, &reg);
-	rc522_write_register(rc522, Status2Reg, reg & 0xF7);
-	return STATUS_OK;
-}
-
-int rc522_mifare_transceive(const struct spi_dt_spec *rc522, uint8_t length, uint8_t *data, int accept_timeout) {
-	if (data == NULL || length > 16) {
-		return STATUS_INVALID;
-	}
-
+static int rc522_mifare_transceive(const struct spi_dt_spec *rc522, const uint8_t length, const uint8_t *data, const int accept_timeout) {
 	uint8_t buffer[18];
 	memcpy(buffer, data, length);
 	rc522_crc(rc522, buffer, length, buffer+length);
 
 	struct communicate_argument arg = {
-		.command = Transceive,
+		.command = PCD_Transceive,
 		.wait_irq = 0x20, // RxIRq
 		.transmit_data = buffer,
 		.transmit_len = length+2,
@@ -432,8 +436,8 @@ int rc522_mifare_transceive(const struct spi_dt_spec *rc522, uint8_t length, uin
 	return STATUS_OK;
 }
 
-int rc522_mifare_write(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t length, uint8_t *data) {
-	if (data == NULL || length < 16) {
+int rc522_mifare_write(const struct spi_dt_spec *rc522, const uint8_t block_addr, const uint8_t length, const uint8_t *data) {
+	if (data == NULL || length != 16) {
 		return STATUS_INVALID;
 	}
 	uint8_t write[2];
@@ -443,12 +447,11 @@ int rc522_mifare_write(const struct spi_dt_spec *rc522, uint8_t block_addr, uint
 	int ret;
 	ret = rc522_mifare_transceive(rc522, 2, write, 0);
 	if (ret != STATUS_OK) {
+		rc522_print_status(ret);
 		return ret;
 	}
 
 	ret = rc522_mifare_transceive(rc522, length, data, 0);
-	if (ret != STATUS_OK) {
-		return ret;
-	}
-	return STATUS_OK;
+	rc522_print_status(ret);
+	return ret;
 }

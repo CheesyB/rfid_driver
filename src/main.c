@@ -9,41 +9,34 @@ int main() {
 	rc522_init(&rc522);
 
 	while (1) {
-		uint8_t atqa[2] = {0};
-		ret = rc522_reqa(&rc522, atqa);
+		ret = rc522_reqa(&rc522);
 		if (ret != STATUS_OK) {
+			k_msleep(250);
 			continue;
 		}
-		rc522_print_status(ret);
 
 		uint8_t UID[5] = {0};
-		ret = rc522_select(&rc522, UID, 0, NULL);
-		rc522_print_status(ret);
+		rc522_select(&rc522, UID, 0, NULL);
 
-		uint8_t sak[1] = {0};
-		ret = rc522_select(&rc522, UID, 1, sak);
-		rc522_print_status(ret);
+		ret = rc522_select(&rc522, UID, 1, NULL);
 		if (ret != STATUS_OK) {
 			continue;
 		}
 
-		uint8_t key[6];
-		memset(key, 0xFF, 6);
-		ret = rc522_authenticate(&rc522, 0, key, UID);
-		rc522_print_status(ret);
+		const uint8_t block = 1;
+		const uint8_t key[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+		rc522_mifare_auth(&rc522, block, key, UID);
 
 		uint8_t length = 18;
 		uint8_t read_values[18] = {0};
-		ret = rc522_read(&rc522, 1, &length, read_values);
-		rc522_print_status(ret);
+		rc522_mifare_read(&rc522, block, &length, read_values);
 
 		read_values[0]++;
-		ret = rc522_mifare_write(&rc522, 1, 16, read_values);
-		rc522_print_status(ret);
+		rc522_mifare_write(&rc522, block, 16, read_values);
 
-		rc522_deauthenticate(&rc522);
+		rc522_mifare_deauth(&rc522);
 
-		k_msleep(1000);
+		k_msleep(1500);
 	}
 
 	return 0;

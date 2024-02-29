@@ -87,17 +87,17 @@ enum Register {
 };
 	
 // MFRC522 commands. Described in chapter 10 of the datasheet.
-enum Command {
-	Idle				= 0x00,		// no action, cancels current command execution
-	Mem					= 0x01,		// stores 25 bytes into the internal buffer
-	GenerateRandomID	= 0x02,		// generates a 10-byte random ID number
-	CalcCRC				= 0x03,		// activates the CRC coprocessor or performs a self-test
-	Transmit			= 0x04,		// transmits data from the FIFO buffer
-	NoCmdChange			= 0x07,		// no command change, can be used to modify the CommandReg register bits without affecting the command, for example, the PowerDown bit
-	Receive				= 0x08,		// activates the receiver circuits
-	Transceive 			= 0x0C,		// transmits data from FIFO buffer to antenna and automatically activates the receiver after transmission
-	MFAuthent 			= 0x0E,		// performs the MIFARE standard authentication as a reader
-	SoftReset			= 0x0F		// resets the MFRC522
+enum PCD_Command {
+	PCD_Idle				= 0x00,		// no action, cancels current command execution
+	PCD_Mem					= 0x01,		// stores 25 bytes into the internal buffer
+	PCD_GenerateRandomID	= 0x02,		// generates a 10-byte random ID number
+	PCD_CalcCRC				= 0x03,		// activates the CRC coprocessor or performs a self-test
+	PCD_Transmit			= 0x04,		// transmits data from the FIFO buffer
+	PCD_NoCmdChange			= 0x07,		// no command change, can be used to modify the CommandReg register bits without affecting the command, for example, the PowerDown bit
+	PCD_Receive				= 0x08,		// activates the receiver circuits
+	PCD_Transceive 			= 0x0C,		// transmits data from FIFO buffer to antenna and automatically activates the receiver after transmission
+	PCD_MFAuthent 			= 0x0E,		// performs the MIFARE standard authentication as a reader
+	PCD_SoftReset			= 0x0F		// resets the MFRC522
 };
 
 // Commands sent to the PICC.
@@ -129,7 +129,7 @@ enum PICC_Command {
 
 // Return codes from the functions in this class. Remember to update GetStatusCodeName() if you add more.
 // last value set to 0xff, then compiler uses less ram, it seems some optimisations are triggered
-enum StatusCode {
+enum Status_Code {
 	STATUS_OK				,	// Success
 	STATUS_ERROR			,	// Error in communication
 	STATUS_COLLISION		,	// Collission detected
@@ -141,13 +141,11 @@ enum StatusCode {
 	STATUS_MIFARE_NACK		= 0xff	// A MIFARE PICC responded with NAK.
 };
 
-int rc522_write_register(const struct spi_dt_spec *rc522, uint8_t reg, uint8_t write_value);
-int rc522_write_register_many(const struct spi_dt_spec *rc522, uint8_t reg, int length, uint8_t *write_values);
-int rc522_read_register(const struct spi_dt_spec *rc522, uint8_t reg, uint8_t *read_value);
-int rc522_read_register_many(const struct spi_dt_spec *rc522, uint8_t reg, int length, uint8_t *read_values, uint8_t rx_align);
-int rc522_test(const struct spi_dt_spec *rc522);
-
-int rc522_init(const struct spi_dt_spec *rc522);
+// MIFARE constants that does not fit anywhere else
+enum MIFARE_Misc {
+	MF_ACK					= 0xA,		// The MIFARE Classic uses a 4 bit ACK/NAK. Any other value than 0xA is NAK.
+	MF_KEY_SIZE				= 6			// A Mifare Crypto1 key is 6 bytes.
+};
 
 struct communicate_argument {
 	uint8_t command; // Required.
@@ -161,22 +159,41 @@ struct communicate_argument {
 	int check_CRC; // Default false (0).
 };
 
-int rc522_communicate(const struct spi_dt_spec *rc522, struct communicate_argument *arg);
-int rc522_reqa(const struct spi_dt_spec *rc522, uint8_t *atqa);
-int rc522_crc(const struct spi_dt_spec *rc522, uint8_t *data, uint8_t length, uint8_t *result);
-int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, uint8_t UID_valid, uint8_t *sak);
-int rc522_authenticate(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *key, uint8_t *UID);
+/* Runs standard test procedure to confirm working SPI communication with RC522
+ * and ability to run commands, run CRC coprocessor, etc. Prints 64 bytes of
+ * standard test data which can be cross referenced. Does not use antenna. */
+int rc522_test(const struct spi_dt_spec *rc522);
 
-void rc522_print_status(uint8_t status_code);
-int rc522_read(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t *length, uint8_t *read_values);
-int rc522_deauthenticate(const struct spi_dt_spec *rc522);
+/* Ensures default settings for CRC, timer, baud rate, etc. Turns on antenna. */
+int rc522_init(const struct spi_dt_spec *rc522);
 
-// MIFARE constants that does not fit anywhere else
-enum MIFARE_Misc {
-	MF_ACK					= 0xA,		// The MIFARE Classic uses a 4 bit ACK/NAK. Any other value than 0xA is NAK.
-	MF_KEY_SIZE				= 6			// A Mifare Crypto1 key is 6 bytes.
-};
+/* Sends a REQA to all nearby tags. */
+int rc522_reqa(const struct spi_dt_spec *rc522);
 
-int rc522_mifare_transceive(const struct spi_dt_spec *rc522, uint8_t length, uint8_t *data, int accept_timeout);
+/* Sends a Select to all nearby tags. Does NOT implement anticollision and just
+ * stores the 5 byte response in UID when UID_valid is false. When UID_valid is
+ * true, selects the tag with the matching UID and stores the 1 byte response
+ * in sak if it is not NULL. */
+int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, const uint8_t UID_valid, uint8_t *sak);
 
-int rc522_mifare_write(const struct spi_dt_spec *rc522, uint8_t block_addr, uint8_t length, uint8_t *data);
+/* Sends a MIFARE authentication command to the selected tag with the
+ * corresponding UID. If the key matches the key for the sector that block_addr
+ * falls under, this function will grant access to that sector. */
+int rc522_mifare_auth(const struct spi_dt_spec *rc522, const uint8_t block_addr, const uint8_t *key, const uint8_t *UID);
+
+/* Does NOT send any commands to any tag. Instead, this function disables
+ * encryption so that non-MIFARE functions can once again be used. */
+int rc522_mifare_deauth(const struct spi_dt_spec *rc522);
+
+/* Assuming authentication has been granted, this function will read the 16
+ * data bytes and 2 CRC bytes of the block located at block_addr into the
+ * read_values array; length >= 18 required. The length variable will be
+ * updated with the length of the actual response if it is shorter for some
+ * reason. */
+int rc522_mifare_read(const struct spi_dt_spec *rc522, const uint8_t block_addr, uint8_t *length, uint8_t *read_values);
+
+/* Assuming authentication has been granted, this function will write the 16
+ * data bytes from the data array into the block located at block_addr. The
+ * length variable MUST be 16. */
+int rc522_mifare_write(	const struct spi_dt_spec *rc522, const uint8_t block_addr, const uint8_t length, const uint8_t *data);
+
