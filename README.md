@@ -8,6 +8,11 @@ The goal of this project is to create a driver/library for the MFRC522 on Zephyr
 ### Features
 - Connects to tag using the ISO/IEC 14443-A protocol.
 - Authenticates, reads, and writes data using the MIFARE proprietary protocol.
+- Generates traces to verify functionality.
+<p align="center">
+  <img src="pics/trace.png" height="300" alt="trace">
+</p>
+
 ## RC522 Driver
 A driver for the MFRC522 already exists for the Arduino ecosystem. However, this project is built on Zephyr OS, so the driver needs to be ported to interop with the Zephyr SPI interface. The main difference comes in the functions to read from and write to the registers on the MFRC522, as these functions directly interact with the SPI bus. Many of the other functions look much more similar to the functions in the Arduino library, as they don’t need to interact with the SPI bus directly. The remaining differences are mostly either differences in the timing API, or small changes to the interface exposed to the application code. Not all features of the Arduino library are implemented, as they are not all necessary for this application (such as the anti-collision procedure). The final API includes functions to connect to the tag, to authenticate using the MIFARE protocol, and to read and write data to the blocks.
 ## References
