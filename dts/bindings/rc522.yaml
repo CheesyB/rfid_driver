@@ -1,5 +1,0 @@
-description: RFID-RC522 Device
-
-compatible: "rc522"
-
-include: spi-device.yaml

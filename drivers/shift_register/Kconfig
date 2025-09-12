@@ -1,6 +1,0 @@
-config SR
-	bool "Enable Shift Register Driver"
-	default n
-	select SPI
-	help
-		Enables the shift register wrapper driver over SPI.

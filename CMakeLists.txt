@@ -1,12 +1,5 @@
-cmake_minimum_required(VERSION 3.28.3)
+zephyr_syscall_header(${ZEPHYR_LIBOSTENTUS_MODULE_DIR}/include/libostentus.h)
 
-set(DTC_OVERLAY_FILE "boards/esp32.overlay")
-find_package(Zephyr)
+zephyr_library()
 
-project(rfid_smart_lock)
-
-FILE(GLOB app_sources src/*.c)
-target_sources(app PRIVATE ${app_sources})
-
-add_subdirectory(drivers)
-include_directories(include)
+zephyr_library_sources_ifdef(CONFIG_RC522 rc522.c)

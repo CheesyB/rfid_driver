@@ -1,2 +1,32 @@
-rsource "drivers/Kconfig"
-source "Kconfig.zephyr"
+
+menuconfig RFID
+  bool "Radio Frequency stuff"
+  default y
+  depends on DT_HAS_NXP_MFRC522_ENABLED
+  select SPI
+  help
+    Enable rfid chip so you can scan your cards
+
+if RFID
+
+config MFRC522_INIT_PRIORITY
+  int "MFRC522 init priority"
+  default 90
+  help
+    mfrc522 init priority.
+
+
+config MFRC522_LOG_LEVEL
+    int "Default log level for mfrc522"
+    default 4
+    help
+        The default log level, which is used to filter log messages.
+        0: None
+        1: Error
+        2: Warn
+        3: Info
+        4: Debug
+        5: Verbose
+
+
+endif # RFID

@@ -1,2 +1,0 @@
-rsource "shift_register/Kconfig"
-rsource "rc522/Kconfig"
