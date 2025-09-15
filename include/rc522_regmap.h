@@ -164,8 +164,8 @@ struct communicate_argument {
  * standard test data which can be cross referenced. Does not use antenna. */
 int rc522_test(const struct spi_dt_spec *rc522);
 
-/* Ensures default settings for CRC, timer, baud rate, etc. Turns on antenna. */
-int rc522_init(const struct spi_dt_spec *rc522);
+// /* Ensures default settings for CRC, timer, baud rate, etc. Turns on antenna. */
+// int rc522_init(const struct spi_dt_spec *rc522);
 
 /* Sends a REQA to all nearby tags. */
 int rc522_reqa(const struct spi_dt_spec *rc522);

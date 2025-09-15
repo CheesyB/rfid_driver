@@ -1,46 +1,53 @@
+#define DT_DRV_COMPAT nxp_rc522
+
+#include "zephyr/sys/printk.h"
 #include <rc522.h>
+#include <rc522_regmap.h>
 #include <stdint.h>
+#include <zephyr/device.h>
 #include <zephyr/drivers/spi.h>
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 
+LOG_MODULE_REGISTER(rc522, CONFIG_RC522_LOG_LEVEL);
 
-#define DT_DRV_COMPAT nxp_rc522 
+static int rc522_init(const struct device *dev) {
+  const struct rc522_config *config = dev->config;
 
-static int rc522_init(const struct device *dev)
-{
-    const struct rc522_config *config = dev->config;
+  if (!device_is_ready(config->spi.bus)) {
+    printk("SPI bus device not ready");
+    return -ENODEV;
+  }
 
-    if (!device_is_ready(config->spi.bus)) {
-        LOG_ERR("SPI bus device not ready");
-        return -ENODEV;
-    }
+  uint8_t version;
+  int err = rc522_read_version(dev, &version);
+  if (err) {
+    printk("Unable to communicate with rc522 over spi: %d", err);
+    return err;
+  } else {
+    printk("rc522 firmware version: 0x%02X", version);
+  }
 
-    uint8_t version;
-    int err = read_version(dev, &version);
-    if (err) {
-        LOG_ERR("Unable to communicate with rc522 over spi: %d", err);
-        return err;
-    } else {
-        LOG_INF("rc522 firmware version: %s", buf);
-    }
-
-    return 0;
+  return 0;
 }
 
+static int rc522_read_register(const struct device *dev, const uint8_t reg,
+                               uint8_t *read_value) {
 
-static int rc522_read_register(const struct spi_dt_spec *rc522, const uint8_t
-reg, uint8_t *read_value) { 	uint8_t tx_buf[2] = {0x80 | reg}; 	struct spi_buf
-send_buf = {tx_buf, 2}; 	struct spi_buf_set send_buf_set = {&send_buf, 1};
+  const struct rc522_config *config = dev->config;
+  uint8_t tx_buf[2] = {0x80 | reg};
+  struct spi_buf send_buf = {tx_buf, 2};
+  struct spi_buf_set send_buf_set = {&send_buf, 1};
 
-	uint8_t rx_buf[2];
-	struct spi_buf receive_buf = {rx_buf, 2};
-	struct spi_buf_set receive_buf_set = {&receive_buf, 1};
+  uint8_t rx_buf[2];
+  struct spi_buf receive_buf = {rx_buf, 2};
+  struct spi_buf_set receive_buf_set = {&receive_buf, 1};
 
-	int ret;
-	ret = spi_transceive_dt(rc522, &send_buf_set, &receive_buf_set);
-	*read_value = rx_buf[1];
-	return ret;
+  int ret;
+  ret = spi_transceive_dt(&config->spi, &send_buf_set, &receive_buf_set);
+  *read_value = rx_buf[1];
+  return ret;
 }
-
 
 static int rc522_write_register(const struct spi_dt_spec *rc522,
                                 const uint8_t reg, const uint8_t write_value) {
@@ -50,32 +57,23 @@ static int rc522_write_register(const struct spi_dt_spec *rc522,
   return spi_write_dt(rc522, &send_buf_set);
 }
 
-
-int read_version(const struct device *dev) {
-	uint8_t ret;
-  uint8_t version;
-	ret = rc522_read_register(dev, VersionReg, &version);
-  return version;
+int read_version(const struct device *dev, uint8_t *read_value) {
+  uint8_t ret;
+  ret = rc522_read_register(dev, VersionReg, read_value);
+  return ret;
 }
 
 static const struct rc522_driver_api rc522_api = {
     .rc522_read_version = &read_version,
 };
 
-
-#define RC522_DEFINE(inst)                                      \
-    static const struct rc522_config rc522_config_##inst = { \
-        .spi = SPI_DT_SPEC_INST_GET(inst),                         \
-    };                                                             \
-                                                                   \
-    DEVICE_DT_INST_DEFINE(inst,                                    \
-                  rc522_init,                                   \
-                  NULL,                                            \
-                  NULL,                                            \
-                  &rc522_config_##inst,                         \
-                  POST_KERNEL,                                     \
-                  CONFIG_rc522_INIT_PRIORITY,                   \
-                  &rc522_api);
+#define RC522_DEFINE(inst)                                                     \
+  static const struct rc522_config rc522_config_##inst = {                     \
+      .spi = SPI_DT_SPEC_INST_GET(inst),                                       \
+  };                                                                           \
+                                                                               \
+  DEVICE_DT_INST_DEFINE(inst, rc522_init, NULL, NULL, &rc522_config_##inst,    \
+                        POST_KERNEL, CONFIG_rc522_INIT_PRIORITY, &rc522_api);
 
 DT_INST_FOREACH_STATUS_OKAY(rc522_DEFINE)
 
@@ -120,11 +118,11 @@ DT_INST_FOREACH_STATUS_OKAY(rc522_DEFINE)
 // 	rc522_write_register(rc522, CommandReg, PCD_SoftReset);
 //
 // 	/* 2. Clear the internal buffer by writing 25 bytes of 00h and implement
-// the config command. */ 	uint8_t ZEROS[25] = {0}; 	rc522_write_register(rc522,
-// FIFOLevelReg, 0x80); // Flush FIFO buffer 	rc522_write_register_many(rc522,
-// FIFODataReg, 25, ZEROS); // Write 25 zeros to FIFO buffer
-// 	rc522_write_register(rc522, CommandReg, PCD_Mem); // Transfer zeros to
-// internal buffer
+// the config command. */ 	uint8_t ZEROS[25] = {0};
+// rc522_write_register(rc522, FIFOLevelReg, 0x80); // Flush FIFO buffer
+// rc522_write_register_many(rc522, FIFODataReg, 25, ZEROS); // Write 25 zeros
+// to FIFO buffer 	rc522_write_register(rc522, CommandReg, PCD_Mem); //
+// Transfer zeros to internal buffer
 //
 // 	/* 3. Enable the self test by writing 09h to the AutoTestReg register.
 // */ 	rc522_write_register(rc522, AutoTestReg, 0x09);
@@ -180,15 +178,15 @@ DT_INST_FOREACH_STATUS_OKAY(rc522_DEFINE)
 // 	} while (++count < 3);*/
 //
 // 	rc522_write_register(rc522, TxModeReg, 0x00); // Enable CRC and use
-// 106kBd. 	rc522_write_register(rc522, RxModeReg, 0x00); // Enable CRC and use
-// 106kBd.
+// 106kBd. 	rc522_write_register(rc522, RxModeReg, 0x00); // Enable CRC and
+// use 106kBd.
 //
 // 	rc522_write_register(rc522, ModWidthReg, 0x26); // Reset Miller
 // modulation width.
 //
 // 	rc522_write_register(rc522, TModeReg, 0x80); // Timer starts at end of
-// transmission. 	rc522_write_register(rc522, TPrescalerReg, 0xA9); // Set timer
-// period to 25 us. 	rc522_write_register(rc522, TReloadRegH, 0x03);
+// transmission. 	rc522_write_register(rc522, TPrescalerReg, 0xA9); // Set
+// timer period to 25 us. 	rc522_write_register(rc522, TReloadRegH, 0x03);
 // 	rc522_write_register(rc522, TReloadRegL, 0xE8); // Set timeout to 25 ms.
 //
 // 	rc522_write_register(rc522, TxASKReg, 0x40); // Use 100% ASK
@@ -204,10 +202,10 @@ DT_INST_FOREACH_STATUS_OKAY(rc522_DEFINE)
 //
 // static int rc522_crc(const struct spi_dt_spec *rc522, const uint8_t *data,
 // const uint8_t length, uint8_t *result) { 	rc522_write_register(rc522,
-// CommandReg, PCD_Idle); 	rc522_write_register(rc522, DivIrqReg, 0x04); // Clear
-// CRCIRq bit. 	rc522_write_register(rc522, FIFOLevelReg, 0x80); // Flush FIFO
-// buffer. 	rc522_write_register_many(rc522, FIFODataReg, length, data);
-// 	rc522_write_register(rc522, CommandReg, PCD_CalcCRC);
+// CommandReg, PCD_Idle); 	rc522_write_register(rc522, DivIrqReg, 0x04); //
+// Clear CRCIRq bit. 	rc522_write_register(rc522, FIFOLevelReg, 0x80); //
+// Flush FIFO buffer. 	rc522_write_register_many(rc522, FIFODataReg, length,
+// data); 	rc522_write_register(rc522, CommandReg, PCD_CalcCRC);
 //
 // 	uint32_t start = k_uptime_get_32();
 // 	do {
@@ -226,17 +224,17 @@ DT_INST_FOREACH_STATUS_OKAY(rc522_DEFINE)
 // }
 //
 // static int rc522_communicate(const struct spi_dt_spec *rc522, struct
-// communicate_argument *arg) { 	uint8_t tx_last_bits = arg->valid_bits; 	uint8_t
-// bit_framing = (arg->rx_align << 4) + tx_last_bits;
+// communicate_argument *arg) { 	uint8_t tx_last_bits = arg->valid_bits;
+// uint8_t bit_framing = (arg->rx_align << 4) + tx_last_bits;
 //
 // 	rc522_write_register(rc522, CommandReg, PCD_Idle);
 // 	rc522_write_register(rc522, ComIrqReg, 0x7f); // Clear interrupt bits.
 // 	rc522_write_register(rc522, FIFOLevelReg, 0x80); // Flush FIFO buffer.
 // 	rc522_write_register_many(rc522, FIFODataReg, arg->transmit_len,
-// arg->transmit_data); 	rc522_write_register(rc522, BitFramingReg, bit_framing);
-// 	rc522_write_register(rc522, CommandReg, arg->command);
-// 	if (arg->command == PCD_Transceive) {
-// 		rc522_write_register(rc522, BitFramingReg, bit_framing | 0x80);
+// arg->transmit_data); 	rc522_write_register(rc522, BitFramingReg,
+// bit_framing); 	rc522_write_register(rc522, CommandReg, arg->command);
+// if (arg->command == PCD_Transceive) {
+// rc522_write_register(rc522, BitFramingReg, bit_framing | 0x80);
 // 	}
 //
 // 	uint32_t start = k_uptime_get_32();
@@ -367,17 +365,12 @@ DT_INST_FOREACH_STATUS_OKAY(rc522_DEFINE)
 // }
 //
 // int rc522_select(const struct spi_dt_spec *rc522, uint8_t *UID, const uint8_t
-// UID_valid, uint8_t *sak) { 	uint8_t select[9]; 	select[0] = PICC_CMD_SEL_CL1;
-// 	if (UID_valid) {
-// 		select[1] = 0x70;
-// 		select[2] = UID[0];
-// 		select[3] = UID[1];
-// 		select[4] = UID[2];
-// 		select[5] = UID[3];
-// 		select[6] = select[2] ^ select[3] ^ select[4] ^ select[5];
-// 		rc522_crc(rc522, select, 7, select+7);
-// 	} else {
-// 		select[1] = 0x20;
+// UID_valid, uint8_t *sak) { 	uint8_t select[9]; 	select[0] =
+// PICC_CMD_SEL_CL1; 	if (UID_valid) { 		select[1] = 0x70;
+// select[2] = UID[0]; 		select[3] = UID[1]; 		select[4] =
+// UID[2]; 		select[5] = UID[3]; 		select[6] = select[2] ^
+// select[3] ^ select[4] ^ select[5]; 		rc522_crc(rc522, select, 7,
+// select+7); 	} else { 		select[1] = 0x20;
 // 	}
 //
 // 	uint8_t local_sak[1] = {0};
@@ -404,9 +397,8 @@ DT_INST_FOREACH_STATUS_OKAY(rc522_DEFINE)
 // }
 //
 // int rc522_mifare_auth(const struct spi_dt_spec *rc522, const uint8_t
-// block_addr, const uint8_t *key, const uint8_t *UID) { 	uint8_t auth[12];
-// 	auth[0] = PICC_CMD_MF_AUTH_KEY_A;
-// 	auth[1] = block_addr;
+// block_addr, const uint8_t *key, const uint8_t *UID) { 	uint8_t
+// auth[12]; 	auth[0] = PICC_CMD_MF_AUTH_KEY_A; 	auth[1] = block_addr;
 // 	memcpy(auth+2, key, 6);
 // 	memcpy(auth+8, UID, 4);
 //
@@ -436,7 +428,8 @@ DT_INST_FOREACH_STATUS_OKAY(rc522_DEFINE)
 // }
 //
 // int rc522_mifare_read(const struct spi_dt_spec *rc522, const uint8_t
-// block_addr, uint8_t *length, uint8_t *read_values) { 	if (read_values == NULL
+// block_addr, uint8_t *length, uint8_t *read_values) { 	if (read_values
+// == NULL
 // || *length < 18) { 		return STATUS_NO_ROOM;
 // 	}
 //
@@ -499,8 +492,8 @@ DT_INST_FOREACH_STATUS_OKAY(rc522_DEFINE)
 // }
 //
 // int rc522_mifare_write(const struct spi_dt_spec *rc522, const uint8_t
-// block_addr, const uint8_t length, const uint8_t *data) { 	if (data == NULL ||
-// length != 16) { 		return STATUS_INVALID;
+// block_addr, const uint8_t length, const uint8_t *data) { 	if (data == NULL
+// || length != 16) { 		return STATUS_INVALID;
 // 	}
 // 	uint8_t write[2];
 // 	write[0] = PICC_CMD_MF_WRITE;
