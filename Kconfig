@@ -16,7 +16,7 @@ config MFRC522_INIT_PRIORITY
     mfrc522 init priority.
 
 
-config RC522_LOG_LEVEL
+config CONFIG_RC522_LOG_LEVEL
     int "Default log level for mfrc522"
     default 4
     help

@@ -1,6 +1,5 @@
 #define DT_DRV_COMPAT nxp_rc522
 
-#include "zephyr/sys/printk.h"
 #include <rc522.h>
 #include <rc522_regmap.h>
 #include <stdint.h>
@@ -9,23 +8,24 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(rc522, CONFIG_RC522_LOG_LEVEL);
+LOG_MODULE_REGISTER(rc522, CONFIG_LOG_DEFAULT_LEVEL);
 
 static int rc522_init(const struct device *dev) {
+  LOG_INF("init rc522 driver");
   const struct rc522_config *config = dev->config;
 
   if (!device_is_ready(config->spi.bus)) {
-    printk("SPI bus device not ready");
+    LOG_ERR("SPI bus device not ready");
     return -ENODEV;
   }
 
   uint8_t version;
   int err = rc522_read_version(dev, &version);
   if (err) {
-    printk("Unable to communicate with rc522 over spi: %d", err);
+    LOG_ERR("Unable to communicate with rc522 over spi: %d", err);
     return err;
   } else {
-    printk("rc522 firmware version: 0x%02X", version);
+    LOG_INF("rc522 firmware version: 0x%02X", version);
   }
 
   return 0;
