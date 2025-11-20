@@ -1,6 +1,0 @@
-config RC522
-	bool "Enable RC522 Driver"
-	default y
-	select SPI
-	help
-		Enables the RC522 driver.

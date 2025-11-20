@@ -2,21 +2,21 @@
 menuconfig RFID
   bool "Radio Frequency stuff"
   default y
-  depends on DT_HAS_NXP_MFRC522_ENABLED
+  depends on DT_HAS_NXP_RC522_ENABLED
   select SPI
   help
     Enable rfid chip so you can scan your cards
 
 if RFID
 
-config MFRC522_INIT_PRIORITY
-  int "MFRC522 init priority"
+config RC522_INIT_PRIORITY
+  int "RC522 init priority"
   default 90
   help
     mfrc522 init priority.
 
 
-config CONFIG_RC522_LOG_LEVEL
+config RC522_LOG_LEVEL
     int "Default log level for mfrc522"
     default 4
     help

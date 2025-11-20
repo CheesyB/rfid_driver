@@ -2,4 +2,4 @@ description: "NXP Semiconductors  MIFARE and NTAG frontend"
 
 compatible: "nxp,rc522"
 
-include: [spi-device.yaml, i2c-device.yaml]
+include: [spi-device.yaml]
